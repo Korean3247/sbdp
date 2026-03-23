@@ -3,21 +3,21 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 
-from src.data.cifar import get_cifar10, get_cifar10_notransform
-from src.data.dataset_wrapper import IndexedDataset, make_subset_loader
-from src.models.resnet import get_resnet18
-from src.scoring.loss_score import LossScorer
-from src.pruning.random_pruner import RandomPruner
-from src.pruning.raw_topk_pruner import RawTopKPruner
-from src.pruning.calibrated_topk_pruner import CalibratedTopKPruner
-from src.pruning.metrics import score_drift_index, mean_turnover
-from src.eval.evaluate import evaluate
-from src.utils.seed import set_seed
-from src.utils.io import (
+from sbdp_lib.data.cifar import get_cifar10, get_cifar10_notransform
+from sbdp_lib.data.dataset_wrapper import IndexedDataset, make_subset_loader
+from sbdp_lib.models.resnet import get_resnet18
+from sbdp_lib.scoring.loss_score import LossScorer
+from sbdp_lib.pruning.random_pruner import RandomPruner
+from sbdp_lib.pruning.raw_topk_pruner import RawTopKPruner
+from sbdp_lib.pruning.calibrated_topk_pruner import CalibratedTopKPruner
+from sbdp_lib.pruning.metrics import score_drift_index, mean_turnover
+from sbdp_lib.eval.evaluate import evaluate
+from sbdp_lib.utils.seed import set_seed
+from sbdp_lib.utils.io import (
     ensure_dir, save_config, save_json, save_scores, save_masks, MetricsLogger
 )
-from src.utils.logging import setup_logger
-from src.utils.config import generate_run_name
+from sbdp_lib.utils.logging import setup_logger
+from sbdp_lib.utils.config import generate_run_name
 
 
 def _build_pruner(config: dict):

@@ -11,8 +11,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 os.chdir(_PROJECT_ROOT)
 
-from src.utils.config import parse_args
-from src.train.trainer import train
+from sbdp_lib.utils.config import parse_args
+from sbdp_lib.train.trainer import train
 
 
 def main():
