@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Run a single SBDP training job."""
 
+import os
 import sys
-from pathlib import Path
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+os.chdir(_PROJECT_ROOT)
 
 from src.utils.config import parse_args
 from src.train.trainer import train
