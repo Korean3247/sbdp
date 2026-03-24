@@ -10,6 +10,7 @@ from sbdp_lib.scoring.loss_score import LossScorer
 from sbdp_lib.pruning.random_pruner import RandomPruner
 from sbdp_lib.pruning.raw_topk_pruner import RawTopKPruner
 from sbdp_lib.pruning.calibrated_topk_pruner import CalibratedTopKPruner
+from sbdp_lib.pruning.calibrated_historical_pruner import CalibratedHistoricalPruner
 from sbdp_lib.pruning.metrics import score_drift_index, mean_turnover
 from sbdp_lib.eval.evaluate import evaluate
 from sbdp_lib.utils.seed import set_seed
@@ -32,6 +33,13 @@ def _build_pruner(config: dict):
         return CalibratedTopKPruner(
             window_size=config["pruning"].get("local_window", 2),
             ema_alpha=config["pruning"].get("ema_alpha", 0.8),
+        )
+    elif mode == "calibrated_historical":
+        return CalibratedHistoricalPruner(
+            window_size=config["pruning"].get("local_window", 2),
+            ema_alpha=config["pruning"].get("ema_alpha", 0.8),
+            beta=config["pruning"].get("historical_beta", 0.1),
+            lambda_c=config["pruning"].get("historical_lambda_c", 0.01),
         )
     else:
         raise ValueError(f"Unknown pruning mode: {mode}")
