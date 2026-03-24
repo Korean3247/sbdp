@@ -29,4 +29,7 @@ def generate_run_name(config: dict) -> str:
     mode = config.get("pruning", {}).get("mode", "full")
     seed = config.get("seed", 0)
     retention = config.get("pruning", {}).get("retention_ratio", 1.0)
+    noise_rate = config.get("noise_rate", 0.0)
+    if noise_rate > 0.0:
+        return f"{dataset}_{model}_{mode}_noise{noise_rate}_ret{retention}_seed{seed}"
     return f"{dataset}_{model}_{mode}_ret{retention}_seed{seed}"

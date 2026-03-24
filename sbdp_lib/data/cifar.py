@@ -1,3 +1,4 @@
+import numpy as np
 import torchvision
 import torchvision.transforms as T
 from pathlib import Path
@@ -35,3 +36,28 @@ def get_cifar10_notransform(data_dir: str = "./data"):
         root=data_dir, train=True, download=True, transform=test_transform
     )
     return train_dataset
+
+
+def apply_symmetric_noise(dataset, noise_rate: float, seed: int = 0):
+    """Apply symmetric label noise to a dataset in-place.
+
+    Each sample is independently flipped to a uniformly random *other* class
+    with probability noise_rate. The same seed produces the same flip pattern,
+    so train_dataset and score_dataset can be kept consistent.
+
+    Returns the dataset with noisy targets (modifies in-place and returns).
+    """
+    if noise_rate <= 0.0:
+        return dataset
+
+    num_classes = 10
+    rng = np.random.RandomState(seed)
+    targets = list(dataset.targets)
+    for i in range(len(targets)):
+        if rng.rand() < noise_rate:
+            orig = targets[i]
+            other = list(range(num_classes))
+            other.remove(orig)
+            targets[i] = int(rng.choice(other))
+    dataset.targets = targets
+    return dataset

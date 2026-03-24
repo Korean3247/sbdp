@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 
-from sbdp_lib.data.cifar import get_cifar10, get_cifar10_notransform
+from sbdp_lib.data.cifar import get_cifar10, get_cifar10_notransform, apply_symmetric_noise
 from sbdp_lib.data.dataset_wrapper import IndexedDataset, make_subset_loader
 from sbdp_lib.models.resnet import get_resnet18
 from sbdp_lib.scoring.loss_score import LossScorer
@@ -87,11 +87,20 @@ def train(config: dict) -> dict:
 
     # Data
     train_dataset, test_dataset = get_cifar10(config.get("data_dir", "./data"))
+
+    # Apply label noise to training data only (test labels stay clean)
+    noise_rate = config.get("noise_rate", 0.0)
+    if noise_rate > 0.0:
+        apply_symmetric_noise(train_dataset, noise_rate, seed=seed)
+        logger.info(f"Applied symmetric label noise: rate={noise_rate}")
+
     train_indexed = IndexedDataset(train_dataset)
     test_indexed = IndexedDataset(test_dataset)
 
-    # Scoring dataset (no augmentation for consistent scores)
+    # Scoring dataset (no augmentation, same noisy labels as train)
     score_dataset_raw = get_cifar10_notransform(config.get("data_dir", "./data"))
+    if noise_rate > 0.0:
+        score_dataset_raw.targets = list(train_dataset.targets)  # reuse same noise pattern
     score_indexed = IndexedDataset(score_dataset_raw)
 
     total_samples = len(train_indexed)
@@ -227,6 +236,7 @@ def train(config: dict) -> dict:
         "mode": mode,
         "seed": seed,
         "retention_ratio": retention_ratio,
+        "noise_rate": noise_rate,
         "epochs": epochs,
         "best_test_acc": round(best_test_acc, 6),
         "final_test_acc": round(test_acc, 6),
