@@ -19,7 +19,7 @@ class AGNewsDataset(Dataset):
         ds = load_dataset("ag_news", split=split)
 
         encoded = tokenizer(
-            ds["text"], truncation=True, padding="max_length",
+            list(ds["text"]), truncation=True, padding="max_length",
             max_length=max_length, return_tensors="pt",
         )
         self.input_ids = encoded["input_ids"]
