@@ -3,8 +3,8 @@ model: distilbert
 num_classes: 4
 max_length: 128
 tokenizer: distilbert-base-uncased
-epochs: 10
-batch_size: 32
+epochs: 5
+batch_size: 64
 lr: 2.0e-5
 optimizer: adamw
 weight_decay: 0.01
