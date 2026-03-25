@@ -25,8 +25,9 @@ def collect_summaries(output_dir="outputs"):
 
 
 def filter_clean(results):
-    """Remove smoke runs (seed=42) and keep only seed 0,1,2."""
-    return [r for r in results if r["seed"] in [0, 1, 2]]
+    """Remove smoke runs (seed=42), noise runs, and keep only seed 0,1,2."""
+    return [r for r in results
+            if r["seed"] in [0, 1, 2] and r.get("noise_rate", 0.0) == 0.0]
 
 
 def group_by_mode_retention(results):

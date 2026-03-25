@@ -5,3 +5,5 @@ pyyaml
 scikit-learn
 pandas
 matplotlib
+transformers>=4.30
+datasets>=2.14

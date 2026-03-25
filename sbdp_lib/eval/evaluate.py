@@ -3,6 +3,14 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 
+def _forward(model, data, device):
+    """Forward pass handling both image tensors and text dicts."""
+    if isinstance(data, dict):
+        return model(data["input_ids"].to(device), data["attention_mask"].to(device))
+    else:
+        return model(data.to(device))
+
+
 @torch.no_grad()
 def evaluate(model: nn.Module, dataloader: DataLoader, device: torch.device) -> dict:
     model.eval()
@@ -11,9 +19,9 @@ def evaluate(model: nn.Module, dataloader: DataLoader, device: torch.device) -> 
     correct = 0
     total = 0
 
-    for images, labels, *rest in dataloader:
-        images, labels = images.to(device), labels.to(device)
-        outputs = model(images)
+    for data, labels, *rest in dataloader:
+        labels = labels.to(device)
+        outputs = _forward(model, data, device)
         loss = criterion(outputs, labels)
         total_loss += loss.item() * labels.size(0)
         _, predicted = outputs.max(1)

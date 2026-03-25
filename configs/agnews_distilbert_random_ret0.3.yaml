@@ -1,0 +1,21 @@
+dataset: agnews
+model: distilbert
+num_classes: 4
+max_length: 128
+tokenizer: distilbert-base-uncased
+epochs: 10
+batch_size: 32
+lr: 2.0e-5
+optimizer: adamw
+weight_decay: 0.01
+scheduler: linear_warmup
+warmup_scheduler_epochs: 1
+num_workers: 2
+pruning:
+  mode: random_pruning
+  enabled: true
+  warmup_epochs: 2
+  interval_epochs: 2
+  retention_ratio: 0.3
+seed: 0
+output_dir: outputs

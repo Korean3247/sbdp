@@ -3,9 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 
-from sbdp_lib.data.cifar import get_cifar10, get_cifar10_notransform, apply_symmetric_noise
 from sbdp_lib.data.dataset_wrapper import IndexedDataset, make_subset_loader
-from sbdp_lib.models.resnet import get_resnet18
 from sbdp_lib.scoring.loss_score import LossScorer
 from sbdp_lib.pruning.random_pruner import RandomPruner
 from sbdp_lib.pruning.raw_topk_pruner import RawTopKPruner
@@ -50,6 +48,13 @@ def _build_scheduler(optimizer, config: dict):
     epochs = config["epochs"]
     if scheduler_type == "cosine":
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    elif scheduler_type == "linear_warmup":
+        warmup_epochs = config.get("warmup_scheduler_epochs", 1)
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return max(0.0, 1.0 - (epoch - warmup_epochs) / (epochs - warmup_epochs))
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     else:
         milestones = config.get("milestones", [int(epochs * 0.5), int(epochs * 0.75)])
         return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
@@ -66,6 +71,91 @@ def _is_pruning_epoch(epoch: int, config: dict) -> bool:
     if epoch < warmup:
         return False
     return (epoch - warmup) % interval == 0
+
+
+def _forward_batch(model, data, device):
+    """Forward pass handling both image tensors and text dicts."""
+    if isinstance(data, dict):
+        return model(data["input_ids"].to(device), data["attention_mask"].to(device))
+    else:
+        return model(data.to(device))
+
+
+def _load_data(config: dict, seed: int, logger):
+    """Load dataset based on config. Returns (train_indexed, test_indexed, score_indexed, is_text)."""
+    dataset_name = config.get("dataset", "cifar10")
+    noise_rate = config.get("noise_rate", 0.0)
+
+    if dataset_name == "cifar10":
+        from sbdp_lib.data.cifar import get_cifar10, get_cifar10_notransform, apply_symmetric_noise
+
+        train_dataset, test_dataset = get_cifar10(config.get("data_dir", "./data"))
+        if noise_rate > 0.0:
+            apply_symmetric_noise(train_dataset, noise_rate, seed=seed)
+            logger.info(f"Applied symmetric label noise: rate={noise_rate}")
+
+        train_indexed = IndexedDataset(train_dataset, is_text=False)
+        test_indexed = IndexedDataset(test_dataset, is_text=False)
+
+        score_dataset_raw = get_cifar10_notransform(config.get("data_dir", "./data"))
+        if noise_rate > 0.0:
+            score_dataset_raw.targets = list(train_dataset.targets)
+        score_indexed = IndexedDataset(score_dataset_raw, is_text=False)
+
+        return train_indexed, test_indexed, score_indexed, False
+
+    elif dataset_name == "agnews":
+        from sbdp_lib.data.agnews import get_agnews, apply_symmetric_noise_text
+
+        max_length = config.get("max_length", 128)
+        tokenizer_name = config.get("tokenizer", "distilbert-base-uncased")
+        train_dataset, test_dataset = get_agnews(max_length, tokenizer_name)
+
+        if noise_rate > 0.0:
+            num_classes = config.get("num_classes", 4)
+            apply_symmetric_noise_text(train_dataset, noise_rate, num_classes, seed=seed)
+            logger.info(f"Applied symmetric label noise: rate={noise_rate}")
+
+        train_indexed = IndexedDataset(train_dataset, is_text=True)
+        test_indexed = IndexedDataset(test_dataset, is_text=True)
+        # For text, scoring uses the same dataset (no augmentation difference)
+        score_indexed = IndexedDataset(train_dataset, is_text=True)
+
+        return train_indexed, test_indexed, score_indexed, True
+
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+
+def _load_model(config: dict, device):
+    """Load model based on config."""
+    model_name = config.get("model", "resnet18")
+    num_classes = config.get("num_classes", 10)
+
+    if model_name == "resnet18":
+        from sbdp_lib.models.resnet import get_resnet18
+        return get_resnet18(num_classes).to(device)
+    elif model_name == "distilbert":
+        from sbdp_lib.models.distilbert import get_distilbert
+        return get_distilbert(num_classes).to(device)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+
+
+def _build_optimizer(model, config: dict):
+    """Build optimizer based on config."""
+    opt_type = config.get("optimizer", "sgd")
+    lr = config.get("lr", 0.1)
+    weight_decay = config.get("weight_decay", 5e-4)
+
+    if opt_type == "adamw":
+        return optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    else:
+        return optim.SGD(
+            model.parameters(), lr=lr,
+            momentum=config.get("momentum", 0.9),
+            weight_decay=weight_decay,
+        )
 
 
 def train(config: dict) -> dict:
@@ -86,22 +176,7 @@ def train(config: dict) -> dict:
     logger.info(f"Device: {device}")
 
     # Data
-    train_dataset, test_dataset = get_cifar10(config.get("data_dir", "./data"))
-
-    # Apply label noise to training data only (test labels stay clean)
-    noise_rate = config.get("noise_rate", 0.0)
-    if noise_rate > 0.0:
-        apply_symmetric_noise(train_dataset, noise_rate, seed=seed)
-        logger.info(f"Applied symmetric label noise: rate={noise_rate}")
-
-    train_indexed = IndexedDataset(train_dataset)
-    test_indexed = IndexedDataset(test_dataset)
-
-    # Scoring dataset (no augmentation, same noisy labels as train)
-    score_dataset_raw = get_cifar10_notransform(config.get("data_dir", "./data"))
-    if noise_rate > 0.0:
-        score_dataset_raw.targets = list(train_dataset.targets)  # reuse same noise pattern
-    score_indexed = IndexedDataset(score_dataset_raw)
+    train_indexed, test_indexed, score_indexed, is_text = _load_data(config, seed, logger)
 
     total_samples = len(train_indexed)
     batch_size = config.get("batch_size", 128)
@@ -112,16 +187,10 @@ def train(config: dict) -> dict:
     )
 
     # Model
-    num_classes = config.get("num_classes", 10)
-    model = get_resnet18(num_classes).to(device)
+    model = _load_model(config, device)
 
-    # Optimizer
-    optimizer = optim.SGD(
-        model.parameters(),
-        lr=config.get("lr", 0.1),
-        momentum=config.get("momentum", 0.9),
-        weight_decay=config.get("weight_decay", 5e-4),
-    )
+    # Optimizer & Scheduler
+    optimizer = _build_optimizer(model, config)
     scheduler = _build_scheduler(optimizer, config)
 
     # Pruner
@@ -135,6 +204,7 @@ def train(config: dict) -> dict:
     mask_history = []
     mode = config["pruning"]["mode"]
     retention_ratio = config["pruning"].get("retention_ratio", 1.0)
+    noise_rate = config.get("noise_rate", 0.0)
 
     metrics_logger = MetricsLogger(output_dir / "metrics.csv")
     criterion = nn.CrossEntropyLoss()
@@ -155,10 +225,10 @@ def train(config: dict) -> dict:
         correct = 0
         total = 0
 
-        for images, labels, sample_ids in train_loader:
-            images, labels = images.to(device), labels.to(device)
+        for data, labels, sample_ids in train_loader:
+            labels = labels.to(device)
             optimizer.zero_grad()
-            outputs = model(images)
+            outputs = _forward_batch(model, data, device)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -204,7 +274,7 @@ def train(config: dict) -> dict:
         if _is_pruning_epoch(epoch, config):
             logger.info(f"Pruning at epoch {epoch} (mode={mode}, retention={retention_ratio})")
 
-            # Score ALL samples (using no-augmentation dataset)
+            # Score ALL samples (using scoring dataset)
             score_loader = make_subset_loader(
                 score_indexed, None, batch_size, shuffle=False, num_workers=num_workers
             )
