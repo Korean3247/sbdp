@@ -1,0 +1,19 @@
+dataset: cifar100
+model: resnet18
+num_classes: 100
+data_dir: ./data
+epochs: 100
+batch_size: 128
+lr: 0.1
+momentum: 0.9
+weight_decay: 5.0e-4
+scheduler: multistep
+num_workers: 2
+pruning:
+  mode: random_pruning
+  enabled: true
+  warmup_epochs: 10
+  interval_epochs: 5
+  retention_ratio: 0.3
+seed: 0
+output_dir: outputs

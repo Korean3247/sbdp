@@ -10,10 +10,11 @@ class CalibratedTopKPruner(BasePruner):
     - Apply EMA smoothing across pruning events
     """
 
-    def __init__(self, window_size: int = 2, ema_alpha: float = 0.8, epsilon: float = 1e-8):
+    def __init__(self, window_size: int = 2, ema_alpha: float = 0.8, epsilon: float = 1e-8, skip_zscore: bool = False):
         self.window_size = window_size
         self.ema_alpha = ema_alpha
         self.epsilon = epsilon
+        self.skip_zscore = skip_zscore
 
     def select(
         self,
@@ -27,32 +28,34 @@ class CalibratedTopKPruner(BasePruner):
         score_history = state.get("score_history", [])
         ema_scores = state.get("ema_scores", {})
 
-        # Current event z-score calibration
+        # Current event z-score calibration (or skip for ema_only mode)
         all_ids = list(scores.keys())
         raw_values = np.array([scores[sid] for sid in all_ids])
-        mu = raw_values.mean()
-        std = raw_values.std()
-        calibrated = {
-            sid: (scores[sid] - mu) / (std + self.epsilon) for sid in all_ids
-        }
 
-        # If we have history, use windowed calibration
-        if len(score_history) >= 1:
-            # Collect recent window scores for additional context
-            recent = score_history[-self.window_size:]
-            # Stack recent + current for window stats
-            window_scores = []
-            for hist in recent:
-                for sid in all_ids:
-                    if sid in hist:
-                        window_scores.append(hist[sid])
-            window_scores.extend(raw_values.tolist())
-            w_arr = np.array(window_scores)
-            w_mu = w_arr.mean()
-            w_std = w_arr.std()
+        if self.skip_zscore:
+            calibrated = {sid: scores[sid] for sid in all_ids}
+        else:
+            mu = raw_values.mean()
+            std = raw_values.std()
             calibrated = {
-                sid: (scores[sid] - w_mu) / (w_std + self.epsilon) for sid in all_ids
+                sid: (scores[sid] - mu) / (std + self.epsilon) for sid in all_ids
             }
+
+            # If we have history, use windowed calibration
+            if len(score_history) >= 1:
+                recent = score_history[-self.window_size:]
+                window_scores = []
+                for hist in recent:
+                    for sid in all_ids:
+                        if sid in hist:
+                            window_scores.append(hist[sid])
+                window_scores.extend(raw_values.tolist())
+                w_arr = np.array(window_scores)
+                w_mu = w_arr.mean()
+                w_std = w_arr.std()
+                calibrated = {
+                    sid: (scores[sid] - w_mu) / (w_std + self.epsilon) for sid in all_ids
+                }
 
         # EMA smoothing
         alpha = self.ema_alpha

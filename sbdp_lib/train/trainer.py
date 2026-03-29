@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -5,10 +6,12 @@ from pathlib import Path
 
 from sbdp_lib.data.dataset_wrapper import IndexedDataset, make_subset_loader
 from sbdp_lib.scoring.loss_score import LossScorer
+from sbdp_lib.scoring.el2n_score import EL2NScorer
 from sbdp_lib.pruning.random_pruner import RandomPruner
 from sbdp_lib.pruning.raw_topk_pruner import RawTopKPruner
 from sbdp_lib.pruning.calibrated_topk_pruner import CalibratedTopKPruner
 from sbdp_lib.pruning.calibrated_historical_pruner import CalibratedHistoricalPruner
+from sbdp_lib.pruning.el2n_pruner import EL2NPruner
 from sbdp_lib.pruning.metrics import score_drift_index, mean_turnover
 from sbdp_lib.eval.evaluate import evaluate
 from sbdp_lib.utils.seed import set_seed
@@ -39,6 +42,20 @@ def _build_pruner(config: dict):
             beta=config["pruning"].get("historical_beta", 0.1),
             lambda_c=config["pruning"].get("historical_lambda_c", 0.01),
         )
+    elif mode == "zscore_only":
+        return CalibratedTopKPruner(
+            window_size=config["pruning"].get("local_window", 2),
+            ema_alpha=0.0,  # No EMA: use only current z-score
+        )
+    elif mode == "ema_only":
+        # EMA on raw scores (no z-score): handled by flag
+        return CalibratedTopKPruner(
+            window_size=config["pruning"].get("local_window", 2),
+            ema_alpha=config["pruning"].get("ema_alpha", 0.8),
+            skip_zscore=True,
+        )
+    elif mode == "el2n":
+        return EL2NPruner()
     else:
         raise ValueError(f"Unknown pruning mode: {mode}")
 
@@ -98,6 +115,24 @@ def _load_data(config: dict, seed: int, logger):
         test_indexed = IndexedDataset(test_dataset, is_text=False)
 
         score_dataset_raw = get_cifar10_notransform(config.get("data_dir", "./data"))
+        if noise_rate > 0.0:
+            score_dataset_raw.targets = list(train_dataset.targets)
+        score_indexed = IndexedDataset(score_dataset_raw, is_text=False)
+
+        return train_indexed, test_indexed, score_indexed, False
+
+    elif dataset_name == "cifar100":
+        from sbdp_lib.data.cifar100 import get_cifar100, get_cifar100_notransform, apply_symmetric_noise
+
+        train_dataset, test_dataset = get_cifar100(config.get("data_dir", "./data"))
+        if noise_rate > 0.0:
+            apply_symmetric_noise(train_dataset, noise_rate, seed=seed)
+            logger.info(f"Applied symmetric label noise: rate={noise_rate}")
+
+        train_indexed = IndexedDataset(train_dataset, is_text=False)
+        test_indexed = IndexedDataset(test_dataset, is_text=False)
+
+        score_dataset_raw = get_cifar100_notransform(config.get("data_dir", "./data"))
         if noise_rate > 0.0:
             score_dataset_raw.targets = list(train_dataset.targets)
         score_indexed = IndexedDataset(score_dataset_raw, is_text=False)
@@ -195,7 +230,11 @@ def train(config: dict) -> dict:
 
     # Pruner
     pruner = _build_pruner(config)
-    scorer = LossScorer()
+    score_type = config["pruning"].get("score_type", "loss")
+    if score_type == "el2n" or mode == "el2n":
+        scorer = EL2NScorer()
+    else:
+        scorer = LossScorer()
     pruner_state = {}
 
     # State
@@ -211,6 +250,7 @@ def train(config: dict) -> dict:
 
     best_test_acc = 0.0
     epochs = config.get("epochs", 100)
+    train_start_time = time.time()
 
     for epoch in range(epochs):
         # Build train loader for current subset
@@ -291,6 +331,8 @@ def train(config: dict) -> dict:
 
             logger.info(f"Selected {len(selected_ids)}/{total_samples} samples")
 
+    total_train_time = time.time() - train_start_time
+
     # Save artifacts
     metrics_logger.save()
     save_scores(score_history, output_dir / "score_history.pt")
@@ -314,6 +356,7 @@ def train(config: dict) -> dict:
         "mean_turnover": round(mt, 6),
         "num_pruning_events": len(mask_history),
         "total_samples": total_samples,
+        "total_train_time_sec": round(total_train_time, 1),
     }
     save_json(summary, output_dir / "summary.json")
     logger.info(f"Summary: {summary}")
